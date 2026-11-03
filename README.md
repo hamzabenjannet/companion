@@ -73,6 +73,69 @@ The project is organized into clear layers:
 - `Debug/`: logging and diagnostic tooling;
 - `companionTests/`: architecture and behavior tests.
 
+## Runtime Data-Flow Diagram
+
+The diagram shows how live capture reaches the assistant. The selected processor determines whether Companion uses local Whisper and Ollama services or a remote multimodal provider.
+
+```text
+┌─────────────────────┐   ┌─────────────────────┐   ┌─────────────────────┐
+│ MicrophoneCapture   │   │ SystemAudioCapture  │   │ ScreenCapture       │
+│ microphone audio    │   │ system audio        │   │ screen video        │
+└──────────┬──────────┘   └──────────┬──────────┘   └──────────┬──────────┘
+           │                         │                         │
+           └─────────────────────────┼─────────────────────────┘
+                                     ▼
+                         ┌─────────────────────┐
+                         │ AudioChunker /      │
+                         │ VideoChunkWriter    │
+                         └──────────┬──────────┘
+                                    │ MediaChunk
+                                    ▼
+                         ┌─────────────────────┐
+                         │ MeetingAssistant    │
+                         │ ordered chunk queue │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │ ProcessorFactory    │
+                         │ selected provider   │
+                         └───────┬───────┬─────┘
+                                 │       │
+                 Local provider  │       │ Remote provider
+                                 ▼       ▼
+                  ┌──────────────────┐  ┌─────────────────────┐
+                  │ Whisper /asr     │  │ Gemini or OpenRouter│
+                  │ audio → text     │  │ audio/video + context│
+                  └────────┬─────────┘  └──────────┬──────────┘
+                           │                       │
+                           ▼                       │
+                  ┌──────────────────┐             │
+                  │ Ollama /api/chat │             │
+                  │ transcript →     │             │
+                  │ suggestion       │             │
+                  └────────┬─────────┘             │
+                           └───────────┬───────────┘
+                                       ▼
+                         ┌─────────────────────┐
+                         │ MeetingAssistant    │
+                         │ transcript +        │
+                         │ suggestions + logs  │
+                         └──────────┬──────────┘
+                                    ▼
+                         ┌─────────────────────┐
+                         │ SwiftUI interface   │
+                         │ conversation +      │
+                         │ capture status      │
+                         └─────────────────────┘
+
+      Typed messages ───────────────► selected processor
+      ToolRegistry ─────────────────► extension point; provider tool calling
+                                      is not implemented yet
+```
+
+In local mode, Companion sends audio chunks to Whisper for transcription, then sends transcript context to Ollama for suggestions. In remote mode, the selected provider receives supported audio and video chunks with conversation context and returns transcript and suggestion data. Screen video is skipped in local mode.
+
 ## Project structure
 
 ```text
@@ -236,14 +299,7 @@ We welcome contributions from developers who want to improve the assistant, add 
 
 ## Roadmap
 
-The next milestones for the project include:
-
-- richer tool execution and command orchestration;
-- MCP server integration support and structured tool calls;
-- stronger file and workspace-aware actions;
-- multi-provider fallback and routing strategies;
-- more robust model benchmarking and selection logic;
-- user-facing workflow actions for editing, summarizing, and updating documents.
+See the [project roadmap](roadmap.md) for current capabilities, priorities, and completion criteria.
 
 ## Security and privacy
 

@@ -12,7 +12,7 @@ nonisolated struct ProviderCapabilities: OptionSet, Sendable {
     /// Can be asked for a JSON-only reply.
     static let jsonMode = ProviderCapabilities(rawValue: 1 << 2)
     /// The client can send tool definitions and return tool calls (see `Tools/`).
-    /// No client implements this yet; see ROADMAP.md.
+    /// No client implements this yet; see `roadmap.md`.
     static let toolCalling = ProviderCapabilities(rawValue: 1 << 3)
 }
 

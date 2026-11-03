@@ -20,7 +20,7 @@ struct SettingsForm: View {
             } else {
                 TextField("Whisper URL", text: $settings.whisperBaseURL)
                 TextField("Ollama URL", text: $settings.ollamaBaseURL)
-                TextField("Ollama model", text: $settings.ollamaModel)
+                LocalModelFields(settings: settings, transport: environment.providers.transport)
             }
             TextField("Language (empty = auto)", text: $settings.language, prompt: Text("e.g. en, fr"))
             TextField(
@@ -49,6 +49,62 @@ struct SettingsForm: View {
             }
         }
         .disabled(environment.assistant.isRunning)
+    }
+}
+
+private struct LocalModelFields: View {
+    @Bindable var settings: AppSettings
+    let transport: any HTTPTransport
+
+    @State private var models: [String] = []
+    @State private var isLoading = false
+    @State private var error: String?
+
+    var body: some View {
+        HStack {
+            Picker("Ollama model", selection: $settings.ollamaModel) {
+                if !models.contains(settings.ollamaModel) {
+                    Text("\(settings.ollamaModel) (current)").tag(settings.ollamaModel)
+                }
+                ForEach(models, id: \.self) { model in
+                    Text(model).tag(model)
+                }
+            }
+
+            Button {
+                Task { await refreshModels() }
+            } label: {
+                if isLoading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+            .help("Reload models from Ollama")
+            .disabled(isLoading)
+        }
+
+        if let error {
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.red)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func refreshModels() async {
+        isLoading = true
+        error = nil
+        defer { isLoading = false }
+
+        do {
+            models = try await LocalBackendClient.listModels(
+                baseURL: settings.ollamaBaseURL,
+                transport: transport
+            )
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 }
 

@@ -53,6 +53,46 @@ struct LocalBackendClientTests {
         }
     }
 
+    @Test func listModelsRequestsAndSortsOllamaModels() async throws {
+        let transport = MockTransport(json: """
+            {"models": [
+              {"name": "qwen2.5:3b"},
+              {"name": "llama3.2:latest"},
+              {"name": "qwen2.5:1b"}
+            ]}
+            """)
+
+        let models = try await LocalBackendClient.listModels(
+            baseURL: settings.ollamaBaseURL,
+            transport: transport
+        )
+
+        #expect(models == ["llama3.2:latest", "qwen2.5:1b", "qwen2.5:3b"])
+        let request = try #require(transport.requests.first)
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.absoluteString == "http://localhost:11434/api/tags")
+    }
+
+    @Test func listModelsReportsHTTPFailures() async throws {
+        let transport = MockTransport(status: 500, json: "Ollama unavailable")
+
+        await #expect(throws: APIError.http(status: 500, body: "Ollama unavailable")) {
+            _ = try await LocalBackendClient.listModels(
+                baseURL: settings.ollamaBaseURL,
+                transport: transport
+            )
+        }
+    }
+
+    @Test func listModelsRejectsInvalidURL() async throws {
+        await #expect(throws: APIError.invalidURL("http://exa mple.com:bad")) {
+            _ = try await LocalBackendClient.listModels(
+                baseURL: "http://exa mple.com:bad",
+                transport: MockTransport(json: #"{"models":[]}"#)
+            )
+        }
+    }
+
     @Test func chatSendsModelAndMessages() async throws {
         let transport = MockTransport(json: #"{"message": {"role": "assistant", "content": " Hi! \n"}}"#)
 

@@ -16,7 +16,7 @@ nonisolated struct ToolDefinition: Equatable, Sendable {
 ///
 /// Conform a type to this protocol and register it in `ToolRegistry`. Providers
 /// that report `ProviderCapabilities.toolCalling` receive the registered
-/// definitions and route tool calls back here. No tools ship yet; see ROADMAP.md.
+/// definitions and route tool calls back here. No tools ship yet; see `roadmap.md`.
 nonisolated protocol AssistantTool: Sendable {
     var definition: ToolDefinition { get }
 

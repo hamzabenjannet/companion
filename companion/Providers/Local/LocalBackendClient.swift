@@ -19,6 +19,14 @@ nonisolated enum LocalBackendClient {
         let text: String
     }
 
+    private struct OllamaModelsResponse: Decodable {
+        let models: [OllamaModel]
+    }
+
+    private struct OllamaModel: Decodable {
+        let name: String
+    }
+
     private struct OllamaRequest: Encodable {
         let model: String
         let stream: Bool
@@ -79,6 +87,27 @@ nonisolated enum LocalBackendClient {
     }
 
     // MARK: Ollama
+
+    static func listModels(
+        baseURL: String,
+        transport: any HTTPTransport = URLSession.shared
+    ) async throws -> [String] {
+        guard let url = URL(string: baseURL)?.appendingPathComponent("api/tags") else {
+            throw APIError.invalidURL(baseURL)
+        }
+
+        var request = URLRequest(url: url, timeoutInterval: 30)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await transport.send(request)
+        try checkHTTP(response, data: data)
+
+        return try JSONDecoder().decode(OllamaModelsResponse.self, from: data)
+            .models
+            .map(\.name)
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
 
     static func chat(
         messages: [ChatMessage],

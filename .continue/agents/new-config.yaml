@@ -1,0 +1,49 @@
+name: Local Ollama
+version: 1.0.0
+schema: v1
+
+models:
+  # Main chat and meeting-assistant model
+  - name: Qwen 2.5 3B
+    provider: ollama
+    model: qwen2.5:3b
+    apiBase: http://localhost:11434
+    roles:
+      - chat
+      - edit
+      - apply
+
+  # Coding model, including tab autocomplete
+  - name: Qwen 2.5 Coder
+    provider: ollama
+    model: qwen2.5-coder:latest
+    apiBase: http://localhost:11434
+    roles:
+      - chat
+      - edit
+      - apply
+      - autocomplete
+    capabilities:
+      - tool_use
+
+  # Vision model
+  - name: LLaVA
+    provider: ollama
+    model: llava:latest
+    apiBase: http://localhost:11434
+    roles:
+      - chat
+    capabilities:
+      - image_input
+
+  # Codebase embeddings
+  - name: Nomic Embed
+    provider: ollama
+    model: nomic-embed-text:latest
+    apiBase: http://localhost:11434
+    roles:
+      - embed
+
+defaultModel: Qwen 2.5 3B
+tabAutocompleteModel: Qwen 2.5 Coder
+embeddingModel: Nomic Embed
