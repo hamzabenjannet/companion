@@ -3,8 +3,8 @@ import Testing
 @testable import companion
 
 @Suite("Whisper and Ollama client")
-struct APIClientTests {
-    private let settings = BackendSettings(
+struct LocalBackendClientTests {
+    private let settings = LocalBackendSettings(
         whisperBaseURL: "http://localhost:42940",
         ollamaBaseURL: "http://localhost:11434",
         ollamaModel: "qwen2.5:3b",
@@ -16,7 +16,7 @@ struct APIClientTests {
         let chunk = try TestFiles.makeChunk(source: .microphone, bytes: Data("RIFFDATA".utf8))
         defer { try? FileManager.default.removeItem(at: chunk.url) }
 
-        let text = try await APIClient.transcribe(wavURL: chunk.url, settings: settings, transport: transport)
+        let text = try await LocalBackendClient.transcribe(wavURL: chunk.url, settings: settings, transport: transport)
 
         #expect(text == "bonjour")
         let request = try #require(transport.requests.first)
@@ -37,7 +37,7 @@ struct APIClientTests {
         let chunk = try TestFiles.makeChunk(source: .system)
         defer { try? FileManager.default.removeItem(at: chunk.url) }
 
-        _ = try await APIClient.transcribe(wavURL: chunk.url, settings: settings, transport: transport)
+        _ = try await LocalBackendClient.transcribe(wavURL: chunk.url, settings: settings, transport: transport)
 
         #expect(transport.requests.first?.queryItems["language"] == nil)
     }
@@ -49,14 +49,14 @@ struct APIClientTests {
         defer { try? FileManager.default.removeItem(at: chunk.url) }
 
         await #expect(throws: APIError.self) {
-            _ = try await APIClient.transcribe(wavURL: chunk.url, settings: settings, transport: MockTransport(json: "{}"))
+            _ = try await LocalBackendClient.transcribe(wavURL: chunk.url, settings: settings, transport: MockTransport(json: "{}"))
         }
     }
 
     @Test func chatSendsModelAndMessages() async throws {
         let transport = MockTransport(json: #"{"message": {"role": "assistant", "content": " Hi! \n"}}"#)
 
-        let reply = try await APIClient.chat(
+        let reply = try await LocalBackendClient.chat(
             messages: [ChatMessage(role: "user", content: "Hello")],
             settings: settings,
             transport: transport
@@ -76,14 +76,14 @@ struct APIClientTests {
         let transport = MockTransport(status: 500, json: "model not found")
 
         await #expect(throws: APIError.http(status: 500, body: "model not found")) {
-            _ = try await APIClient.chat(messages: [], settings: settings, transport: transport)
+            _ = try await LocalBackendClient.chat(messages: [], settings: settings, transport: transport)
         }
     }
 
     @Test func checkHTTPAcceptsSuccessAndNonHTTPResponses() throws {
         let url = URL(string: "https://example.com")!
-        try APIClient.checkHTTP(HTTPURLResponse(url: url, statusCode: 204, httpVersion: nil, headerFields: nil)!, data: Data())
-        try APIClient.checkHTTP(URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil), data: Data())
+        try LocalBackendClient.checkHTTP(HTTPURLResponse(url: url, statusCode: 204, httpVersion: nil, headerFields: nil)!, data: Data())
+        try LocalBackendClient.checkHTTP(URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil), data: Data())
     }
 
     @Test func errorDescriptions() {

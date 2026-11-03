@@ -1,10 +1,12 @@
 import AppKit
 import SwiftUI
 
-@main struct MyApp: App {
+@main struct CompanionApp: App {
+    @State private var environment = AppEnvironment()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(environment: environment)
                 .background(PrivateWindowConfigurator())
         }
         // Keep the companion above the meeting app while you share your screen.

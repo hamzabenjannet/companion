@@ -49,18 +49,18 @@ struct ProviderConfigurationTests {
     }
 
     private func cleanUpKeys() {
-        try? keychain.delete(account: ProviderConfiguration.Key.geminiAPIKeyAccount)
-        try? keychain.delete(account: ProviderConfiguration.Key.openRouterAPIKeyAccount)
+        try? keychain.delete(account: GeminiProvider().storageKeys.apiKeyAccount)
+        try? keychain.delete(account: OpenRouterProvider().storageKeys.apiKeyAccount)
     }
 
     @Test func defaultsWhenNothingIsStored() {
         let config = ProviderConfiguration(defaults: defaults, keychain: keychain)
         #expect(config.provider == .local)
-        #expect(config.geminiBaseURL == "https://generativelanguage.googleapis.com")
-        #expect(config.geminiModel == GeminiClient.defaultModel)
-        #expect(config.geminiAPIKey.isEmpty)
-        #expect(config.openRouterBaseURL == OpenRouterClient.defaultBaseURL)
-        #expect(config.openRouterModel == OpenRouterClient.defaultModel)
+        #expect(config.gemini.baseURL == "https://generativelanguage.googleapis.com")
+        #expect(config.gemini.model == GeminiClient.defaultModel)
+        #expect(config.gemini.apiKey.isEmpty)
+        #expect(config.openRouter.baseURL == OpenRouterClient.defaultBaseURL)
+        #expect(config.openRouter.model == OpenRouterClient.defaultModel)
         #expect(config.isReady)
     }
 
@@ -68,11 +68,11 @@ struct ProviderConfigurationTests {
         defer { cleanUpKeys() }
         let config = ProviderConfiguration(defaults: defaults, keychain: keychain)
         config.provider = .gemini
-        config.geminiBaseURL = "https://example.com"
-        config.geminiModel = "models/gemini-2.5-pro"
-        config.geminiAPIKey = "  secret-gemini \n"
-        config.openRouterModel = "openai/gpt-audio"
-        config.openRouterAPIKey = "secret-or"
+        config.gemini.baseURL = "https://example.com"
+        config.gemini.model = "models/gemini-2.5-pro"
+        config.gemini.apiKey = "  secret-gemini \n"
+        config.openRouter.model = "openai/gpt-audio"
+        config.openRouter.apiKey = "secret-or"
 
         // Keys go to the Keychain (trimmed), never to UserDefaults.
         #expect(keychain.read(account: "gemini") == "secret-gemini")
@@ -81,11 +81,11 @@ struct ProviderConfigurationTests {
 
         let reloaded = ProviderConfiguration(defaults: defaults, keychain: keychain)
         #expect(reloaded.provider == .gemini)
-        #expect(reloaded.geminiBaseURL == "https://example.com")
-        #expect(reloaded.geminiModel == "models/gemini-2.5-pro")
-        #expect(reloaded.geminiAPIKey == "secret-gemini")
-        #expect(reloaded.openRouterModel == "openai/gpt-audio")
-        #expect(reloaded.openRouterAPIKey == "secret-or")
+        #expect(reloaded.gemini.baseURL == "https://example.com")
+        #expect(reloaded.gemini.model == "models/gemini-2.5-pro")
+        #expect(reloaded.gemini.apiKey == "secret-gemini")
+        #expect(reloaded.openRouter.model == "openai/gpt-audio")
+        #expect(reloaded.openRouter.apiKey == "secret-or")
     }
 
     @Test func readinessRequiresKeyAndModel() {
@@ -94,14 +94,14 @@ struct ProviderConfigurationTests {
 
         config.provider = .gemini
         #expect(!config.isReady)
-        config.geminiAPIKey = "k"
+        config.gemini.apiKey = "k"
         #expect(config.isReady)
-        config.geminiModel = ""
+        config.gemini.model = ""
         #expect(!config.isReady)
 
         config.provider = .openRouter
         #expect(!config.isReady)
-        config.openRouterAPIKey = "k"
+        config.openRouter.apiKey = "k"
         #expect(config.isReady)
     }
 
@@ -124,13 +124,13 @@ struct ProviderConfigurationTests {
             """)
         let config = ProviderConfiguration(defaults: defaults, keychain: keychain, transport: transport)
         config.provider = .openRouter
-        config.openRouterAPIKey = "k"
+        config.openRouter.apiKey = "k"
         await config.refreshModels()
 
-        config.openRouterModel = "a/json"
+        config.openRouter.model = "a/json"
         #expect(try #require(config.client(for: .openRouter) as? OpenRouterClient).jsonMode)
 
-        config.openRouterModel = "b/plain"
+        config.openRouter.model = "b/plain"
         #expect(try #require(config.client(for: .openRouter) as? OpenRouterClient).jsonMode == false)
     }
 
@@ -140,8 +140,8 @@ struct ProviderConfigurationTests {
         #expect(config.client(for: .gemini) is GeminiClient)
         #expect(config.client(for: .openRouter) is OpenRouterClient)
         #expect(config.selectedModel(for: .local).isEmpty)
-        #expect(config.selectedModel(for: .gemini) == config.geminiModel)
-        #expect(config.selectedModel(for: .openRouter) == config.openRouterModel)
+        #expect(config.selectedModel(for: .gemini) == config.gemini.model)
+        #expect(config.selectedModel(for: .openRouter) == config.openRouter.model)
         #expect(config.models(for: .local).isEmpty)
     }
 
@@ -155,13 +155,13 @@ struct ProviderConfigurationTests {
             """)
         let config = ProviderConfiguration(defaults: defaults, keychain: keychain, transport: transport)
         config.provider = .gemini
-        config.geminiAPIKey = "k"
-        config.geminiModel = "models/gemini-2.5-pro"
+        config.gemini.apiKey = "k"
+        config.gemini.model = "models/gemini-2.5-pro"
 
         await config.refreshModels()
 
         #expect(config.models(for: .gemini).map(\.displayName) == ["Gemini 2.5 Flash", "Gemini 2.5 Pro"])
-        #expect(config.geminiModel == "models/gemini-2.5-pro")
+        #expect(config.gemini.model == "models/gemini-2.5-pro")
         #expect(config.lastError == nil)
         #expect(!config.isLoadingModels)
     }
@@ -171,13 +171,13 @@ struct ProviderConfigurationTests {
         let transport = MockTransport(json: #"{"data": [{"id": "z/model", "name": "Z"}, {"id": "a/model", "name": "A"}]}"#)
         let config = ProviderConfiguration(defaults: defaults, keychain: keychain, transport: transport)
         config.provider = .openRouter
-        config.openRouterAPIKey = "k"
-        config.openRouterModel = "removed/model"
+        config.openRouter.apiKey = "k"
+        config.openRouter.model = "removed/model"
 
         await config.refreshModels()
 
-        #expect(config.openRouterModels.map(\.id) == ["a/model", "z/model"])
-        #expect(config.openRouterModel == "a/model")
+        #expect(config.openRouter.models.map(\.id) == ["a/model", "z/model"])
+        #expect(config.openRouter.model == "a/model")
     }
 
     @Test func refreshModelsReportsErrors() async {
@@ -187,7 +187,7 @@ struct ProviderConfigurationTests {
         await config.refreshModels()
 
         #expect(config.lastError == APIError.missingAPIKey.errorDescription)
-        #expect(config.geminiModels.isEmpty)
+        #expect(config.gemini.models.isEmpty)
     }
 
     @Test func refreshModelsDoesNothingForLocal() async {
@@ -199,4 +199,10 @@ struct ProviderConfigurationTests {
         #expect(transport.requests.isEmpty)
         #expect(config.lastError == nil)
     }
+}
+
+/// Shorthands for the two built-in remote providers' settings.
+extension ProviderConfiguration {
+    var gemini: RemoteProviderSettings { settings(for: .gemini)! }
+    var openRouter: RemoteProviderSettings { settings(for: .openRouter)! }
 }

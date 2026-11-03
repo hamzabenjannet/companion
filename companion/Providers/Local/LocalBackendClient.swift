@@ -1,7 +1,7 @@
 import Foundation
 
 /// Endpoints and model settings, editable from the UI.
-nonisolated struct BackendSettings: Sendable {
+nonisolated struct LocalBackendSettings: Sendable {
     var whisperBaseURL: String
     var ollamaBaseURL: String
     var ollamaModel: String
@@ -14,41 +14,7 @@ nonisolated struct ChatMessage: Codable, Sendable {
     let content: String
 }
 
-/// Sends HTTP requests. `URLSession` conforms; tests inject a stub.
-nonisolated protocol HTTPTransport: Sendable {
-    func send(_ request: URLRequest) async throws -> (Data, URLResponse)
-}
-
-extension URLSession: HTTPTransport {
-    nonisolated func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        try await data(for: request)
-    }
-}
-
-nonisolated enum APIError: LocalizedError, Equatable {
-    case invalidURL(String)
-    case http(status: Int, body: String)
-    case missingAPIKey
-    case emptyResponse(String)
-    case invalidReply(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidURL(let url):
-            return "Invalid URL: \(url)"
-        case .http(let status, let body):
-            return "HTTP \(status): \(body.prefix(300))"
-        case .missingAPIKey:
-            return "No API key configured."
-        case .emptyResponse(let reason):
-            return "The model returned no content (\(reason))."
-        case .invalidReply(let reply):
-            return "Could not read the model reply: \(reply.prefix(300))"
-        }
-    }
-}
-
-nonisolated enum APIClient {
+nonisolated enum LocalBackendClient {
     private struct WhisperResponse: Decodable {
         let text: String
     }
@@ -69,7 +35,7 @@ nonisolated enum APIClient {
     /// Uploads a WAV file to the whisper-asr-webservice `/asr` endpoint.
     static func transcribe(
         wavURL: URL,
-        settings: BackendSettings,
+        settings: LocalBackendSettings,
         transport: any HTTPTransport = URLSession.shared
     ) async throws -> String {
         guard var components = URLComponents(string: settings.whisperBaseURL) else {
@@ -116,7 +82,7 @@ nonisolated enum APIClient {
 
     static func chat(
         messages: [ChatMessage],
-        settings: BackendSettings,
+        settings: LocalBackendSettings,
         transport: any HTTPTransport = URLSession.shared
     ) async throws -> String {
         guard let url = URL(string: settings.ollamaBaseURL)?.appendingPathComponent("api/chat") else {

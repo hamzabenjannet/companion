@@ -168,7 +168,7 @@ nonisolated struct GeminiClient: MultimodalClient {
         // Follow `nextPageToken`, with a hard cap in case the server keeps returning one.
         for _ in 0..<20 {
             let (data, response) = try await transport.send(try makeListModelsRequest(pageToken: token))
-            try APIClient.checkHTTP(response, data: data)
+            try LocalBackendClient.checkHTTP(response, data: data)
             let page = try Self.parseModels(data)
             all.append(contentsOf: page.models)
             guard let next = page.nextPageToken else { break }
@@ -180,7 +180,7 @@ nonisolated struct GeminiClient: MultimodalClient {
     func generate(model: String, systemPrompt: String, parts: [MediaPart]) async throws -> String {
         let request = try makeGenerateRequest(model: model, systemPrompt: systemPrompt, parts: parts)
         let (data, response) = try await transport.send(request)
-        try APIClient.checkHTTP(response, data: data)
+        try LocalBackendClient.checkHTTP(response, data: data)
         return try Self.parseGenerateResponse(data)
     }
 }

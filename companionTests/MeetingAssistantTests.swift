@@ -5,20 +5,30 @@ import Testing
 @MainActor
 @Suite("Meeting assistant pipeline")
 struct MeetingAssistantTests {
-    private let localSettings = BackendSettings(
+    private let localSettings = LocalBackendSettings(
         whisperBaseURL: "http://whisper.test",
         ollamaBaseURL: "http://ollama.test",
         ollamaModel: "qwen2.5:3b",
         language: ""
     )
 
-    private func remoteMode(_ client: MockMultimodalClient) -> ProcessingMode {
-        .remote(client: client, model: "models/gemini-2.5-flash", language: "en", providerName: "Google Gemini")
+    private func remote(_ client: MockMultimodalClient, batchDelay: Duration = .milliseconds(500)) -> RemoteChunkProcessor {
+        RemoteChunkProcessor(
+            client: client,
+            model: "models/gemini-2.5-flash",
+            language: "en",
+            providerName: "Google Gemini",
+            batchDelay: batchDelay
+        )
+    }
+
+    private func local(_ transport: MockTransport) -> LocalChunkProcessor {
+        LocalChunkProcessor(settings: localSettings, transport: transport)
     }
 
     /// Feeds chunks into a fresh pipeline, stops it and waits for all work to finish.
-    private func run(_ assistant: MeetingAssistant, mode: ProcessingMode, chunks: [MediaChunk]) async {
-        let submit = assistant.beginPipeline(mode: mode)
+    private func run(_ assistant: MeetingAssistant, processor: any ChunkProcessor, chunks: [MediaChunk]) async {
+        let submit = assistant.beginPipeline(processor: processor)
         #expect(assistant.isRunning)
         chunks.forEach(submit)
         await assistant.stop()
@@ -41,13 +51,13 @@ struct MeetingAssistantTests {
             #"{"transcript": [{"speaker": "Others", "text": "What is our Q3 revenue?"}, {"speaker": "Me", "text": "Let me check."}], "suggestion": "Q3 revenue was 1.2M."}"#
         }
         let assistant = MeetingAssistant()
-        assistant.batchDelay = .milliseconds(200)
+        let batchDelay: Duration = .milliseconds(200)
         let mic = try TestFiles.makeChunk(source: .microphone)
         let system = try TestFiles.makeChunk(source: .system)
         let screen = try TestFiles.makeChunk(source: .screen)
         defer { assistant.chunkLog.clear() }
 
-        await run(assistant, mode: remoteMode(client), chunks: [mic, system, screen])
+        await run(assistant, processor: remote(client, batchDelay: batchDelay), chunks: [mic, system, screen])
 
         // All three chunks travel in one request: preamble + (label, media) × 3.
         #expect(client.calls.count == 1)
@@ -69,13 +79,13 @@ struct MeetingAssistantTests {
     @Test func silentChunksAreLoggedButNotSent() async throws {
         let client = MockMultimodalClient { _ in #"{"transcript": [], "suggestion": "NO_RESPONSE"}"# }
         let assistant = MeetingAssistant()
-        assistant.batchDelay = .milliseconds(50)
+        let batchDelay: Duration = .milliseconds(50)
         let url = MediaChunk.makeFileURL(source: .microphone, fileExtension: "wav")
         try Data([1, 2, 3, 4]).write(to: url)
         let silent = MediaChunk(source: .microphone, url: url, duration: 8, mimeType: "audio/wav", isSilent: true)
         defer { assistant.chunkLog.clear() }
 
-        await run(assistant, mode: remoteMode(client), chunks: [silent])
+        await run(assistant, processor: remote(client, batchDelay: batchDelay), chunks: [silent])
 
         #expect(client.calls.isEmpty)
         #expect(assistant.chunkLog.status(of: silent) == .skipped("Silent"))
@@ -86,7 +96,7 @@ struct MeetingAssistantTests {
         let assistant = MeetingAssistant()
         assistant.customInstructions = "I am interviewing for a staff role."
 
-        await assistant.send(text: "  What should I answer?  ", mode: remoteMode(client))
+        await assistant.send(text: "  What should I answer?  ", using: remote(client))
 
         #expect(!assistant.isRunning)
         #expect(assistant.transcript.map(\.text) == ["What should I answer?"])
@@ -109,16 +119,16 @@ struct MeetingAssistantTests {
         let client = MockMultimodalClient()
         let assistant = MeetingAssistant()
 
-        await assistant.send(text: "   ", mode: remoteMode(client))
+        await assistant.send(text: "   ", using: remote(client))
 
         #expect(assistant.transcript.isEmpty)
         #expect(client.calls.isEmpty)
     }
 
     @Test func customInstructionsAreAppendedOnlyWhenSet() {
-        #expect(MeetingAssistant.withCustomInstructions("Base", "") == "Base")
-        #expect(MeetingAssistant.withCustomInstructions("Base", "  \n ") == "Base")
-        let combined = MeetingAssistant.withCustomInstructions("Base", " Be brief. ")
+        #expect(PromptInstructions.appending("", to: "Base") == "Base")
+        #expect(PromptInstructions.appending("  \n ", to: "Base") == "Base")
+        let combined = PromptInstructions.appending(" Be brief. ", to: "Base")
         #expect(combined.hasPrefix("Base\n\n"))
         #expect(combined.hasSuffix("Be brief."))
     }
@@ -126,11 +136,11 @@ struct MeetingAssistantTests {
     @Test func remoteNoResponseIsHidden() async throws {
         let client = MockMultimodalClient { _ in #"{"transcript": [{"speaker": "Me", "text": "  "}], "suggestion": "NO_RESPONSE"}"# }
         let assistant = MeetingAssistant()
-        assistant.batchDelay = .zero
+        let batchDelay: Duration = .zero
         let mic = try TestFiles.makeChunk(source: .microphone)
         defer { assistant.chunkLog.clear() }
 
-        await run(assistant, mode: remoteMode(client), chunks: [mic])
+        await run(assistant, processor: remote(client, batchDelay: batchDelay), chunks: [mic])
 
         #expect(answers(assistant).isEmpty)
         #expect(assistant.transcript.isEmpty)
@@ -142,12 +152,12 @@ struct MeetingAssistantTests {
             #"{"transcript": [{"speaker": "Others", "text": "line \#(index)"}], "suggestion": "tip \#(index)"}"#
         }
         let assistant = MeetingAssistant()
-        assistant.batchDelay = .zero
+        let batchDelay: Duration = .zero
         let first = try TestFiles.makeChunk(source: .system)
         let second = try TestFiles.makeChunk(source: .system)
         defer { assistant.chunkLog.clear() }
 
-        let submit = assistant.beginPipeline(mode: remoteMode(client))
+        let submit = assistant.beginPipeline(processor: remote(client, batchDelay: batchDelay))
         submit(first)
         // Wait for the first request before sending the second chunk.
         while client.calls.isEmpty || assistant.isThinking { await Task.yield() }
@@ -168,11 +178,11 @@ struct MeetingAssistantTests {
     @Test func remoteFailureMarksChunksFailed() async throws {
         let client = MockMultimodalClient { _ in throw TestError(message: "quota exceeded") }
         let assistant = MeetingAssistant()
-        assistant.batchDelay = .zero
+        let batchDelay: Duration = .zero
         let mic = try TestFiles.makeChunk(source: .microphone)
         defer { assistant.chunkLog.clear() }
 
-        await run(assistant, mode: remoteMode(client), chunks: [mic])
+        await run(assistant, processor: remote(client, batchDelay: batchDelay), chunks: [mic])
 
         #expect(assistant.chunkLog.status(of: mic) == .failed("quota exceeded"))
         #expect(errors(assistant) == ["Google Gemini: quota exceeded"])
@@ -181,11 +191,11 @@ struct MeetingAssistantTests {
     @Test func remoteInvalidReplyIsReported() async throws {
         let client = MockMultimodalClient { _ in "sorry, I can't" }
         let assistant = MeetingAssistant()
-        assistant.batchDelay = .zero
+        let batchDelay: Duration = .zero
         let mic = try TestFiles.makeChunk(source: .microphone)
         defer { assistant.chunkLog.clear() }
 
-        await run(assistant, mode: remoteMode(client), chunks: [mic])
+        await run(assistant, processor: remote(client, batchDelay: batchDelay), chunks: [mic])
 
         #expect(errors(assistant).count == 1)
         if case .failed = assistant.chunkLog.status(of: mic) {} else {
@@ -195,10 +205,10 @@ struct MeetingAssistantTests {
 
     @Test func remainingIntervalMath() {
         let now = ContinuousClock.now
-        #expect(MeetingAssistant.remainingInterval(since: nil, minInterval: 30, now: now) == .zero)
-        #expect(MeetingAssistant.remainingInterval(since: now, minInterval: 0, now: now) == .zero)
-        #expect(MeetingAssistant.remainingInterval(since: now - .seconds(10), minInterval: 30, now: now) == .seconds(20))
-        #expect(MeetingAssistant.remainingInterval(since: now - .seconds(40), minInterval: 30, now: now) == .zero)
+        #expect(RequestThrottle.remainingInterval(since: nil, minInterval: 30, now: now) == .zero)
+        #expect(RequestThrottle.remainingInterval(since: now, minInterval: 0, now: now) == .zero)
+        #expect(RequestThrottle.remainingInterval(since: now - .seconds(10), minInterval: 30, now: now) == .seconds(20))
+        #expect(RequestThrottle.remainingInterval(since: now - .seconds(40), minInterval: 30, now: now) == .zero)
     }
 
     @Test func remoteRequestsRespectMinimumInterval() async throws {
@@ -208,14 +218,19 @@ struct MeetingAssistantTests {
             return #"{"transcript": [], "suggestion": ""}"#
         }
         let assistant = MeetingAssistant()
-        assistant.batchDelay = .zero
+        let batchDelay: Duration = .zero
         let first = try TestFiles.makeChunk(source: .microphone)
         let second = try TestFiles.makeChunk(source: .system)
         let third = try TestFiles.makeChunk(source: .microphone)
         defer { assistant.chunkLog.clear() }
 
-        let submit = assistant.beginPipeline(mode: .remote(
-            client: client, model: "m", language: "", providerName: "OpenRouter", minInterval: 0.4
+        let submit = assistant.beginPipeline(processor: RemoteChunkProcessor(
+            client: client,
+            model: "m",
+            language: "",
+            providerName: "OpenRouter",
+            throttle: RequestThrottle(minInterval: 0.4),
+            batchDelay: batchDelay
         ))
         submit(first)
         while client.calls.isEmpty || assistant.isThinking { await Task.yield() }
@@ -236,16 +251,16 @@ struct MeetingAssistantTests {
     @Test func remoteBatchesAreCapped() async throws {
         let client = MockMultimodalClient { _ in #"{"transcript": [], "suggestion": ""}"# }
         let assistant = MeetingAssistant(chunkLog: ChunkLog(capacity: 50))
-        assistant.batchDelay = .milliseconds(200)
-        let chunks = try (0..<(MeetingAssistant.maxChunksPerRequest + 3)).map { _ in
+        let batchDelay: Duration = .milliseconds(200)
+        let chunks = try (0..<(RemoteChunkProcessor.maxChunksPerRequest + 3)).map { _ in
             try TestFiles.makeChunk(source: .microphone)
         }
         defer { assistant.chunkLog.clear() }
 
-        await run(assistant, mode: remoteMode(client), chunks: chunks)
+        await run(assistant, processor: remote(client, batchDelay: batchDelay), chunks: chunks)
 
         #expect(client.calls.count == 2)
-        #expect(client.calls[0].parts.count == 1 + 2 * MeetingAssistant.maxChunksPerRequest)
+        #expect(client.calls[0].parts.count == 1 + 2 * RemoteChunkProcessor.maxChunksPerRequest)
         #expect(client.calls[1].parts.count == 1 + 2 * 3)
     }
 
@@ -264,11 +279,11 @@ struct MeetingAssistantTests {
 
     @Test func localTranscribesAndInterprets() async throws {
         let transport = localTransport()
-        let assistant = MeetingAssistant(transport: transport)
+        let assistant = MeetingAssistant()
         let mic = try TestFiles.makeChunk(source: .microphone)
         defer { assistant.chunkLog.clear() }
 
-        await run(assistant, mode: .local(localSettings), chunks: [mic])
+        await run(assistant, processor: local(transport), chunks: [mic])
 
         #expect(assistant.transcript.map(\.text) == ["Hello team"])
         #expect(assistant.transcript.first?.source == .microphone)
@@ -280,12 +295,12 @@ struct MeetingAssistantTests {
 
     @Test func localSkipsScreenChunksAndEmptyTranscripts() async throws {
         let transport = localTransport(transcript: "")
-        let assistant = MeetingAssistant(transport: transport)
+        let assistant = MeetingAssistant()
         let screen = try TestFiles.makeChunk(source: .screen)
         let system = try TestFiles.makeChunk(source: .system)
         defer { assistant.chunkLog.clear() }
 
-        await run(assistant, mode: .local(localSettings), chunks: [screen, system])
+        await run(assistant, processor: local(transport), chunks: [screen, system])
 
         if case .skipped = assistant.chunkLog.status(of: screen) {} else { Issue.record("Screen chunk should be skipped") }
         #expect(assistant.chunkLog.status(of: system) == .skipped("No speech recognized."))
@@ -294,22 +309,24 @@ struct MeetingAssistantTests {
     }
 
     @Test func localNoResponseIsHidden() async throws {
-        let assistant = MeetingAssistant(transport: localTransport(reply: "NO_RESPONSE"))
+        let transport = localTransport(reply: "NO_RESPONSE")
+        let assistant = MeetingAssistant()
         let mic = try TestFiles.makeChunk(source: .microphone)
         defer { assistant.chunkLog.clear() }
 
-        await run(assistant, mode: .local(localSettings), chunks: [mic])
+        await run(assistant, processor: local(transport), chunks: [mic])
 
         #expect(assistant.transcript.count == 1)
         #expect(answers(assistant).isEmpty)
     }
 
     @Test func localWhisperErrorIsReported() async throws {
-        let assistant = MeetingAssistant(transport: MockTransport(status: 503, json: "busy"))
+        let transport = MockTransport(status: 503, json: "busy")
+        let assistant = MeetingAssistant()
         let mic = try TestFiles.makeChunk(source: .microphone)
         defer { assistant.chunkLog.clear() }
 
-        await run(assistant, mode: .local(localSettings), chunks: [mic])
+        await run(assistant, processor: local(transport), chunks: [mic])
 
         #expect(assistant.chunkLog.status(of: mic) == .failed("HTTP 503: busy"))
         #expect(errors(assistant) == ["Whisper (Me): HTTP 503: busy"])
@@ -318,10 +335,11 @@ struct MeetingAssistantTests {
     // MARK: Misc
 
     @Test func clearResetsTranscriptAndSuggestions() async throws {
-        let assistant = MeetingAssistant(transport: localTransport())
+        let transport = localTransport()
+        let assistant = MeetingAssistant()
         let mic = try TestFiles.makeChunk(source: .microphone)
         defer { assistant.chunkLog.clear() }
-        await run(assistant, mode: .local(localSettings), chunks: [mic])
+        await run(assistant, processor: local(transport), chunks: [mic])
 
         assistant.clear()
 
@@ -339,20 +357,23 @@ struct MeetingAssistantTests {
 
     @Test func testRemoteReportsSuccessAndFailure() async {
         let assistant = MeetingAssistant()
-        await assistant.testRemote(client: MockMultimodalClient { _ in "Yes, online." }, model: "m", providerName: "OpenRouter")
-        await assistant.testRemote(client: MockMultimodalClient { _ in throw TestError(message: "bad key") }, model: "m", providerName: "OpenRouter")
+        func processor(_ client: MockMultimodalClient) -> RemoteChunkProcessor {
+            RemoteChunkProcessor(client: client, model: "m", language: "", providerName: "OpenRouter")
+        }
+        await assistant.testConnection(using: processor(MockMultimodalClient { _ in "Yes, online." }))
+        await assistant.testConnection(using: processor(MockMultimodalClient { _ in throw TestError(message: "bad key") }))
 
         #expect(assistant.suggestions.map(\.text) == ["OpenRouter OK (m): Yes, online.", "OpenRouter: bad key"])
         #expect(assistant.suggestions.map(\.kind) == [.info, .error])
     }
 
     @Test func testOllamaReportsSuccessAndFailure() async {
-        let ok = MeetingAssistant(transport: localTransport(reply: "Online."))
-        await ok.testOllama(settings: localSettings)
+        let ok = MeetingAssistant()
+        await ok.testConnection(using: local(localTransport(reply: "Online.")))
         #expect(ok.suggestions.last?.text == "Ollama OK: Online.")
 
-        let failing = MeetingAssistant(transport: MockTransport(status: 404, json: "no model"))
-        await failing.testOllama(settings: localSettings)
+        let failing = MeetingAssistant()
+        await failing.testConnection(using: local(MockTransport(status: 404, json: "no model")))
         #expect(failing.suggestions.last?.text == "Ollama: HTTP 404: no model")
     }
 }

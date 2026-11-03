@@ -135,14 +135,14 @@ nonisolated struct OpenRouterClient: MultimodalClient {
 
     func listModels() async throws -> [RemoteModel] {
         let (data, response) = try await transport.send(try makeListModelsRequest())
-        try APIClient.checkHTTP(response, data: data)
+        try LocalBackendClient.checkHTTP(response, data: data)
         return try Self.parseModels(data)
     }
 
     func generate(model: String, systemPrompt: String, parts: [MediaPart]) async throws -> String {
         let request = try makeGenerateRequest(model: model, systemPrompt: systemPrompt, parts: parts)
         let (data, response) = try await transport.send(request)
-        try APIClient.checkHTTP(response, data: data)
+        try LocalBackendClient.checkHTTP(response, data: data)
         return try Self.parseGenerateResponse(data)
     }
 }
