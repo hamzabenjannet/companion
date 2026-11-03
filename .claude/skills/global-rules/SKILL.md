@@ -1,13 +1,13 @@
 ---
 name: "global-rules"
-description: "Hamza's global writing and reasoning rules, applied to every response that contains prose. Enforces the agent-style ruleset: 21 named rules from Strunk & White, Orwell, Pinker, and Gopen & Swan plus nine field-observed LLM anti-patterns. Use for chat answers, explanations, documentation, READMEs, commit messages, PR and issue text, runbooks, postmortems, release notes, design docs, specs, research papers, proposals, emails, LinkedIn and blog posts, code comments, and error messages. Also use when asked to review, de-AI, humanize, tighten, proofread, or style-check a draft, when asked whether a claim is actually supported, and before returning any written deliverable. Opt-in STE profile (ASD-STE100 Simplified Technical English) for STE requests and for maintenance procedures, task cards, or safety notices."
+description: "Global writing and reasoning rules, applied to every response that contains prose. Enforces the agent-style ruleset: 21 named rules from Strunk & White, Orwell, Pinker, and Gopen & Swan plus nine field-observed LLM anti-patterns. Use for chat answers, explanations, documentation, READMEs, commit messages, PR and issue text, runbooks, postmortems, release notes, design docs, specs, research papers, proposals, emails, LinkedIn and blog posts, code comments, and error messages. Also use when asked to review, de-AI, humanize, tighten, proofread, or style-check a draft, when asked whether a claim is actually supported, and before returning any written deliverable. Opt-in STE profile (ASD-STE100 Simplified Technical English) for STE requests and for maintenance procedures, task cards, or safety notices."
 ---
 
 # Global Rules
 
 A writing ruleset for prose. The default register of a language model runs to long sentences, em dashes, hedged abstractions, bullets in place of argument, and claims with no source behind them. A technical reader hears that register as machine output. Worse, each of those habits can hide an absence of substance rather than carry any.
 
-Source: *The Elements of Agent Style* (https://github.com/yzhao062/agent-style), CC BY 4.0. Adapted for upload to the Claude apps by Hamza Ben Jannet (fork: https://github.com/hamzabenjannet/agent-style).
+Source: _The Elements of Agent Style_ (https://github.com/yzhao062/agent-style), CC BY 4.0. Adapted for upload to the Claude apps (fork: https://github.com/hamzabenjannet/agent-style).
 
 ## Scope
 
@@ -29,11 +29,11 @@ When two instructions conflict, the higher level wins:
 
 Every request runs under one profile. Formal is the default.
 
-| Profile | Activates when | Changes to the 21 rules |
-|---|---|---|
-| formal | technical docs, papers, proposals, specs, READMEs, runbooks, emails to clients | none: all 21 rules apply |
+| Profile  | Activates when                                                                  | Changes to the 21 rules                                                    |
+| -------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| formal   | technical docs, papers, proposals, specs, READMEs, runbooks, emails to clients  | none: all 21 rules apply                                                   |
 | informal | casual chat, SMS drafts, an informal blog voice, release notes, commit messages | RULE-I (contractions) and RULE-G (title case) off; the other nineteen hold |
-| STE | see STE Profile below | STE overrides at precedence level 3 |
+| STE      | see STE Profile below                                                           | STE overrides at precedence level 3                                        |
 
 One register holds for a whole document. Do not switch profile mid-document.
 
@@ -115,12 +115,12 @@ RULE-H is the rule with teeth. Some facts move after a training cutoff: version 
 
 `rules.md` names upstream enforcement tiers and tools. Their counterparts in this skill:
 
-| Upstream tier | In this skill |
-|---|---|
-| Tier-1 `deny` and `ask` | `check_style.py` deny and ask blocks |
-| Tier-2 LanguageTool, ProseLint | not shipped: judged by reading in the semantic audit |
-| Tier-3 agent self-check | `review-pass.md`, Self-Check |
-| Tier-4 Codex review | `review-pass.md`, Full Review; for high-stakes work, a separate agent that did not write the draft |
+| Upstream tier                  | In this skill                                                                                      |
+| ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Tier-1 `deny` and `ask`        | `check_style.py` deny and ask blocks                                                               |
+| Tier-2 LanguageTool, ProseLint | not shipped: judged by reading in the semantic audit                                               |
+| Tier-3 agent self-check        | `review-pass.md`, Self-Check                                                                       |
+| Tier-4 Codex review            | `review-pass.md`, Full Review; for high-stakes work, a separate agent that did not write the draft |
 
 ## Self-Verification
 
