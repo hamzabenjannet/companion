@@ -21,12 +21,13 @@ struct SettingsForm: View {
                 TextField("Whisper URL", text: $settings.whisperBaseURL)
                 TextField("Ollama URL", text: $settings.ollamaBaseURL)
                 LocalModelFields(settings: settings, transport: environment.providers.transport)
+                LocalPromptFields(settings: settings)
             }
             TextField("Language (empty = auto)", text: $settings.language, prompt: Text("e.g. en, fr"))
             TextField(
-                "System prompt",
+                "Additional instructions",
                 text: $settings.customInstructions,
-                prompt: Text("Optional extra instructions, e.g. I'm a backend engineer interviewing for a staff role"),
+                prompt: Text("Optional instructions appended to the system prompt"),
                 axis: .vertical
             )
             .lineLimit(2...5)
@@ -49,6 +50,32 @@ struct SettingsForm: View {
             }
         }
         .disabled(environment.assistant.isRunning)
+    }
+}
+
+private struct LocalPromptFields: View {
+    @Bindable var settings: AppSettings
+
+    var body: some View {
+        TextField(
+            "Ollama system message",
+            text: $settings.ollamaSystemPrompt,
+            prompt: Text("Instructions that define the assistant's role and response style"),
+            axis: .vertical
+        )
+        .lineLimit(5...12)
+
+        TextField(
+            "Ollama context message",
+            text: $settings.ollamaUserMessageTemplate,
+            prompt: Text("Use the placeholders below to include live conversation context"),
+            axis: .vertical
+        )
+        .lineLimit(5...10)
+
+        Text("Placeholders: {{transcript}}, {{new_line_count}}, {{previous_suggestions}}")
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 }
 

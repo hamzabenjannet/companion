@@ -5,6 +5,8 @@ nonisolated struct LocalBackendSettings: Sendable {
     var whisperBaseURL: String
     var ollamaBaseURL: String
     var ollamaModel: String
+    var ollamaSystemPrompt: String
+    var ollamaUserMessageTemplate: String
     /// Empty string lets Whisper auto-detect the language.
     var language: String
 }

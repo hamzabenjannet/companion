@@ -119,15 +119,17 @@ final class LocalChunkProcessor: ChunkProcessor {
         let messages = [
             ChatMessage(
                 role: "system",
-                content: PromptInstructions.appending(context.customInstructions, to: PromptInstructions.localSystemPrompt)
+                content: PromptInstructions.appending(context.customInstructions, to: settings.ollamaSystemPrompt)
             ),
-            ChatMessage(role: "user", content: """
-                Live meeting transcript (most recent last; the last \(newLines) line(s) are new):
-                \(transcript)
-
-                Your previous suggestions (do not repeat them):
-                \(previous.isEmpty ? "(none)" : previous)
-                """),
+            ChatMessage(
+                role: "user",
+                content: PromptInstructions.renderLocalUserMessage(
+                    template: settings.ollamaUserMessageTemplate,
+                    transcript: transcript,
+                    newLineCount: newLines,
+                    previousSuggestions: previous.isEmpty ? "(none)" : previous
+                )
+            ),
         ]
 
         context.setThinking(true)

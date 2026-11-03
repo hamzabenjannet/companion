@@ -245,6 +245,7 @@ open companion.xcodeproj
 4. Configure your provider and backend settings in the app:
    - local Whisper endpoint;
    - local Ollama endpoint and model;
+   - Ollama system message and context template, with `{{transcript}}`, `{{new_line_count}}`, and `{{previous_suggestions}}` placeholders;
    - remote provider credentials;
    - capture settings for microphone, system audio, and screen.
 

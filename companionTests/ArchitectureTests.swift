@@ -53,6 +53,8 @@ struct AppSettingsTests {
         #expect(settings.whisperBaseURL == "http://localhost:42940")
         #expect(settings.ollamaBaseURL == "http://localhost:11434")
         #expect(settings.ollamaModel == "qwen2.5:3b")
+        #expect(settings.ollamaSystemPrompt == PromptInstructions.localSystemPrompt)
+        #expect(settings.ollamaUserMessageTemplate == PromptInstructions.localUserMessageTemplate)
         #expect(settings.language.isEmpty)
         #expect(settings.chunkSeconds == 8)
         #expect(settings.captureOptions == CaptureOptions(microphone: true, systemAudio: true, screen: false, chunkDuration: 8))
@@ -66,12 +68,16 @@ struct AppSettingsTests {
         settings.captureMicrophone = false
         settings.captureScreen = true
         settings.customInstructions = "Be brief."
+        settings.ollamaSystemPrompt = "Act as a coding assistant."
+        settings.ollamaUserMessageTemplate = "Transcript: {{transcript}}"
 
         let reloaded = AppSettings(defaults: defaults)
         #expect(reloaded.language == "fr")
         #expect(reloaded.localBackend.language == "fr")
         #expect(reloaded.captureOptions == CaptureOptions(microphone: false, systemAudio: true, screen: true, chunkDuration: 5))
         #expect(reloaded.customInstructions == "Be brief.")
+        #expect(reloaded.ollamaSystemPrompt == "Act as a coding assistant.")
+        #expect(reloaded.ollamaUserMessageTemplate == "Transcript: {{transcript}}")
     }
 
     @Test func captureOptionsNeedAtLeastOneChannel() {

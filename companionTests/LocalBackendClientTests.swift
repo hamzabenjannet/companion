@@ -8,6 +8,8 @@ struct LocalBackendClientTests {
         whisperBaseURL: "http://localhost:42940",
         ollamaBaseURL: "http://localhost:11434",
         ollamaModel: "qwen2.5:3b",
+        ollamaSystemPrompt: PromptInstructions.localSystemPrompt,
+        ollamaUserMessageTemplate: PromptInstructions.localUserMessageTemplate,
         language: "fr"
     )
 

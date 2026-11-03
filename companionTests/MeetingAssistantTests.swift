@@ -9,6 +9,8 @@ struct MeetingAssistantTests {
         whisperBaseURL: "http://whisper.test",
         ollamaBaseURL: "http://ollama.test",
         ollamaModel: "qwen2.5:3b",
+        ollamaSystemPrompt: PromptInstructions.localSystemPrompt,
+        ollamaUserMessageTemplate: PromptInstructions.localUserMessageTemplate,
         language: ""
     )
 
@@ -291,6 +293,37 @@ struct MeetingAssistantTests {
         #expect(assistant.chunkLog.status(of: mic) == .done("Hello team"))
         #expect(transport.requests.map { $0.url?.host ?? "" } == ["whisper.test", "ollama.test"])
         #expect(!assistant.isTranscribing)
+    }
+
+    @Test func localUsesConfiguredSystemAndContextMessages() async throws {
+        var settings = localSettings
+        settings.ollamaSystemPrompt = "Act as a concise assistant."
+        settings.ollamaUserMessageTemplate = """
+            New lines ({{new_line_count}}):
+            {{transcript}}
+            Earlier answers:
+            {{previous_suggestions}}
+            """
+        let transport = localTransport()
+        let assistant = MeetingAssistant()
+        assistant.customInstructions = "Use plain language."
+        assistant.post(.answer, "Earlier answer")
+        let mic = try TestFiles.makeChunk(source: .microphone)
+        defer { assistant.chunkLog.clear() }
+
+        await run(assistant, processor: LocalChunkProcessor(settings: settings, transport: transport), chunks: [mic])
+
+        let request = try #require(transport.requests.first { $0.url?.path == "/api/chat" })
+        let body = try #require(request.jsonBody)
+        let messages = try #require(body["messages"] as? [[String: String]])
+        #expect(messages.count == 2)
+        #expect(messages[0]["role"] == "system")
+        #expect(messages[0]["content"]?.contains("Act as a concise assistant.") == true)
+        #expect(messages[0]["content"]?.contains("Use plain language.") == true)
+        #expect(messages[1]["role"] == "user")
+        #expect(messages[1]["content"]?.contains("New lines (1):") == true)
+        #expect(messages[1]["content"]?.contains("Me: Hello team") == true)
+        #expect(messages[1]["content"]?.contains("- Earlier answer") == true)
     }
 
     @Test func localSkipsScreenChunksAndEmptyTranscripts() async throws {
