@@ -115,6 +115,7 @@ nonisolated enum MultimodalPrompt {
 
             Tasks:
             1. Transcribe the speech in each new audio chunk verbatim. Label it "Me" or "Others" according to the chunk it came from. Skip silence and noise; never invent speech.
+               Consecutive audio chunks from the same channel overlap by about one second, so a chunk may start with words already heard at the end of the previous chunk or transcript. Don't transcribe those words twice.
             2. Using the transcript and what is visible on screen, decide whether the user needs help:
                - If someone asks a question (especially "Others" asking "Me"), give a concise, accurate answer the user can say.
                - If a claim, decision, or something on screen would benefit from a quick fact, opinion, or follow-up question, give one short, useful insight.
@@ -127,10 +128,10 @@ nonisolated enum MultimodalPrompt {
     }
 
     /// Text that introduces the new media: recent transcript and earlier suggestions.
-    static func preamble(context: [TranscriptLine], previousSuggestions: [String]) -> String {
+    static func preamble(context: [TranscriptLine], previousSuggestions: [String], hasMedia: Bool = true) -> String {
         let transcript = context.isEmpty
             ? "(nothing yet)"
-            : context.map { "\($0.source.speakerLabel): \($0.text)" }.joined(separator: "\n")
+            : context.map { "\($0.speakerLabel): \($0.text)" }.joined(separator: "\n")
         let previous = previousSuggestions.isEmpty
             ? "(none)"
             : previousSuggestions.map { "- \($0)" }.joined(separator: "\n")
@@ -141,9 +142,15 @@ nonisolated enum MultimodalPrompt {
             Your previous suggestions (do not repeat them):
             \(previous)
 
-            New media chunks follow.
+            \(hasMedia ? "New media chunks follow." : "No new media.")
             """
     }
+
+    /// Sent after the preamble when the user typed a message instead of speaking.
+    static let typedMessageNote = """
+        The last "Me (typed)" line was typed by the user directly to you. Answer it in "suggestion" \
+        (do not reply \(noResponseToken)) and leave "transcript" empty.
+        """
 
     /// Label placed before each attachment so the model knows its channel and timing.
     static func label(for chunk: MediaChunk) -> String {

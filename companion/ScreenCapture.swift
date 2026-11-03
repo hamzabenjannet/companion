@@ -145,6 +145,8 @@ nonisolated final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegat
     private let maxWidth: Int
     private let onChunk: @Sendable (MediaChunk) -> Void
     private let onError: @Sendable (Error) -> Void
+    /// Called for every captured frame (frames only arrive when the screen changes).
+    private let onFrame: @Sendable () -> Void
     private let sampleQueue = DispatchQueue(label: "companion.screen")
     private var stream: SCStream?
     private var writer: VideoChunkWriter?
@@ -154,13 +156,15 @@ nonisolated final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegat
         framesPerSecond: Int = 1,
         maxWidth: Int = 1280,
         onChunk: @escaping @Sendable (MediaChunk) -> Void,
-        onError: @escaping @Sendable (Error) -> Void
+        onError: @escaping @Sendable (Error) -> Void,
+        onFrame: @escaping @Sendable () -> Void = {}
     ) {
         self.chunkDuration = chunkDuration
         self.framesPerSecond = framesPerSecond
         self.maxWidth = maxWidth
         self.onChunk = onChunk
         self.onError = onError
+        self.onFrame = onFrame
     }
 
     /// Scales a display size down to `maxWidth`, keeping the aspect ratio and
@@ -226,6 +230,7 @@ nonisolated final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegat
     ) {
         guard type == .screen, sampleBuffer.isValid, Self.isCompleteFrame(sampleBuffer) else { return }
         writer?.append(sampleBuffer)
+        onFrame()
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {

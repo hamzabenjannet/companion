@@ -35,6 +35,9 @@ nonisolated struct MediaChunk: Identifiable, Sendable, Equatable {
     let duration: TimeInterval
     let mimeType: String
     let createdAt: Date
+    /// Audio too quiet to be worth processing. Still emitted so the debug list
+    /// and indicators show that recording ran without gaps.
+    let isSilent: Bool
 
     init(
         id: UUID = UUID(),
@@ -42,7 +45,8 @@ nonisolated struct MediaChunk: Identifiable, Sendable, Equatable {
         url: URL,
         duration: TimeInterval,
         mimeType: String,
-        createdAt: Date = .now
+        createdAt: Date = .now,
+        isSilent: Bool = false
     ) {
         self.id = id
         self.source = source
@@ -50,6 +54,7 @@ nonisolated struct MediaChunk: Identifiable, Sendable, Equatable {
         self.duration = duration
         self.mimeType = mimeType
         self.createdAt = createdAt
+        self.isSilent = isSilent
     }
 
     var isAudio: Bool { mimeType.hasPrefix("audio/") }
@@ -88,11 +93,22 @@ nonisolated enum CaptureError: LocalizedError {
     }
 }
 
+/// Live state of a capture channel, reported as buffers arrive.
+nonisolated struct CaptureMeter: Sendable, Equatable {
+    /// RMS level of the latest buffer (0...1).
+    var level: Float
+    /// How much of the current chunk's new audio is recorded (0...1).
+    var progress: Double
+}
+
 // MARK: - Chunker
 
 /// Receives PCM buffers in any format, converts them to 16 kHz mono Float32
 /// (what Whisper expects), and emits a WAV file every `chunkDuration` seconds.
-/// Chunks that are almost silent are dropped so Whisper doesn't hallucinate text.
+/// Chunks are cut back to back from one continuous buffer, and each one also
+/// repeats the last `overlapDuration` seconds of the previous chunk, so a word
+/// cut at a boundary is heard whole at least once. Chunks that are almost
+/// silent are marked `isSilent` so they aren't sent (Whisper hallucinates on silence).
 nonisolated final class AudioChunker: @unchecked Sendable {
     static let sampleRate: Double = 16_000
     static let targetFormat = AVAudioFormat(
@@ -104,54 +120,70 @@ nonisolated final class AudioChunker: @unchecked Sendable {
 
     private let source: CaptureSource
     private let chunkFrames: Int
+    private let overlapFrames: Int
     private let silenceThreshold: Float
     private let onChunk: @Sendable (MediaChunk) -> Void
+    private let onMeter: @Sendable (CaptureMeter) -> Void
 
     // Guarded by `lock`; buffers arrive on audio threads.
     private let lock = NSLock()
     private var converter: AVAudioConverter?
     private var samples: [Float] = []
+    /// Leading samples of `samples` that were already sent in the previous chunk.
+    private var carriedFrames = 0
 
     init(
         source: CaptureSource,
         chunkDuration: TimeInterval,
+        overlapDuration: TimeInterval = 1,
         silenceThreshold: Float = 0.003,
-        onChunk: @escaping @Sendable (MediaChunk) -> Void
+        onChunk: @escaping @Sendable (MediaChunk) -> Void,
+        onMeter: @escaping @Sendable (CaptureMeter) -> Void = { _ in }
     ) {
         self.source = source
-        self.chunkFrames = Int(chunkDuration * Self.sampleRate)
+        self.chunkFrames = max(1, Int(chunkDuration * Self.sampleRate))
+        // Keep the overlap at most half a chunk so every chunk is mostly new audio.
+        self.overlapFrames = min(max(0, Int(overlapDuration * Self.sampleRate)), chunkFrames / 2)
         self.silenceThreshold = silenceThreshold
         self.onChunk = onChunk
+        self.onMeter = onMeter
     }
 
     func append(_ buffer: AVAudioPCMBuffer) {
         var ready: [[Float]] = []
+        var level: Float = 0
 
         lock.lock()
         if let converted = convert(buffer), let channel = converted.floatChannelData {
-            samples.append(
-                contentsOf: UnsafeBufferPointer(start: channel[0], count: Int(converted.frameLength))
-            )
+            let new = Array(UnsafeBufferPointer(start: channel[0], count: Int(converted.frameLength)))
+            samples.append(contentsOf: new)
+            level = Self.rms(new)
         }
         while samples.count >= chunkFrames {
             ready.append(Array(samples.prefix(chunkFrames)))
-            samples.removeFirst(chunkFrames)
+            // Keep the tail so the next chunk starts with the overlap.
+            samples.removeFirst(chunkFrames - overlapFrames)
+            carriedFrames = overlapFrames
         }
+        let progress = Double(samples.count - carriedFrames) / Double(chunkFrames - carriedFrames)
         lock.unlock()
 
         // Write files outside the lock to keep the audio thread responsive.
         ready.forEach(emit)
+        onMeter(CaptureMeter(level: level, progress: min(1, max(0, progress))))
     }
 
-    /// Emits whatever is buffered (if at least one second long). Call on stop.
+    /// Emits whatever is buffered (if it holds at least one second of new audio). Call on stop.
     func flush() {
         lock.lock()
         let remaining = samples
+        let carried = carriedFrames
         samples.removeAll()
+        carriedFrames = 0
         converter = nil
         lock.unlock()
 
-        if remaining.count >= Int(Self.sampleRate) {
+        if remaining.count - carried >= Int(Self.sampleRate) {
             emit(remaining)
         }
     }
@@ -189,8 +221,6 @@ nonisolated final class AudioChunker: @unchecked Sendable {
     }
 
     private func emit(_ chunk: [Float]) {
-        guard Self.rms(chunk) >= silenceThreshold else { return }
-
         let url = MediaChunk.makeFileURL(source: source, fileExtension: "wav")
         do {
             try Self.wavData(from: chunk, sampleRate: Int(Self.sampleRate)).write(to: url)
@@ -198,7 +228,8 @@ nonisolated final class AudioChunker: @unchecked Sendable {
                 source: source,
                 url: url,
                 duration: Double(chunk.count) / Self.sampleRate,
-                mimeType: "audio/wav"
+                mimeType: "audio/wav",
+                isSilent: Self.rms(chunk) < silenceThreshold
             ))
         } catch {
             // Dropping one chunk is acceptable for a POC; capture keeps running.

@@ -85,7 +85,7 @@ struct AudioChunkerTests {
 
     @Test func emitsFixedLengthChunksAndResamples() throws {
         let collector = Collector<MediaChunk>()
-        let chunker = AudioChunker(source: .microphone, chunkDuration: 1, onChunk: collector.append)
+        let chunker = AudioChunker(source: .microphone, chunkDuration: 1, overlapDuration: 0, onChunk: collector.append)
 
         chunker.append(try makeBuffer(seconds: 2.5))
 
@@ -119,13 +119,74 @@ struct AudioChunkerTests {
         try FileManager.default.removeItem(at: chunk.url)
     }
 
-    @Test func dropsSilentChunks() throws {
+    @Test func marksSilentChunks() throws {
         let collector = Collector<MediaChunk>()
-        let chunker = AudioChunker(source: .microphone, chunkDuration: 1, onChunk: collector.append)
+        let chunker = AudioChunker(source: .microphone, chunkDuration: 1, overlapDuration: 0, onChunk: collector.append)
 
         chunker.append(try makeBuffer(seconds: 2.2, amplitude: 0))
         chunker.flush()
 
-        #expect(collector.values.isEmpty)
+        // Silent chunks are still emitted back to back, just flagged.
+        #expect(collector.values.count == 2)
+        let allSilent = collector.values.allSatisfy { $0.isSilent }
+        #expect(allSilent)
+        try collector.values.forEach { try FileManager.default.removeItem(at: $0.url) }
+    }
+
+    @Test func soundChunksAreNotSilent() throws {
+        let collector = Collector<MediaChunk>()
+        let chunker = AudioChunker(source: .microphone, chunkDuration: 1, overlapDuration: 0, onChunk: collector.append)
+
+        chunker.append(try makeBuffer(seconds: 1.2))
+
+        let chunk = try #require(collector.values.first)
+        #expect(!chunk.isSilent)
+        try FileManager.default.removeItem(at: chunk.url)
+    }
+
+    @Test func chunksOverlapPreviousChunk() throws {
+        let collector = Collector<MediaChunk>()
+        let chunker = AudioChunker(source: .system, chunkDuration: 4, overlapDuration: 1, onChunk: collector.append)
+
+        // 4 s, then every 3 s of new audio: chunks cover 0–4, 3–7, 6–10.
+        chunker.append(try makeBuffer(seconds: 10.2))
+        #expect(collector.values.count == 3)
+
+        // Overlap: the last second of chunk 1 equals the first second of chunk 2.
+        let first = try Data(contentsOf: collector.values[0].url)
+        let second = try Data(contentsOf: collector.values[1].url)
+        let oneSecond = 16_000 * 2
+        #expect(first.suffix(oneSecond) == second.dropFirst(44).prefix(oneSecond))
+
+        // Only 0.2 s of new audio remains, below the one-second minimum.
+        chunker.flush()
+        #expect(collector.values.count == 3)
+        try collector.values.forEach { try FileManager.default.removeItem(at: $0.url) }
+    }
+
+    @Test func overlapIsCappedAtHalfAChunk() throws {
+        let collector = Collector<MediaChunk>()
+        let chunker = AudioChunker(source: .microphone, chunkDuration: 2, overlapDuration: 5, onChunk: collector.append)
+
+        // Overlap is capped at 1 s: chunks cover 0–2, 1–3.
+        chunker.append(try makeBuffer(seconds: 3.1))
+        #expect(collector.values.count == 2)
+        try collector.values.forEach { try FileManager.default.removeItem(at: $0.url) }
+    }
+
+    @Test func reportsLevelAndProgress() throws {
+        let meters = Collector<CaptureMeter>()
+        let chunker = AudioChunker(
+            source: .microphone,
+            chunkDuration: 4,
+            overlapDuration: 0,
+            onChunk: { _ in },
+            onMeter: meters.append
+        )
+
+        chunker.append(try makeBuffer(seconds: 1))
+        let meter = try #require(meters.values.last)
+        #expect(meter.level > 0.3)
+        #expect(abs(meter.progress - 0.25) < 0.02)
     }
 }

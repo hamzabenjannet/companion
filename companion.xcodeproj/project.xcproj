@@ -90,6 +90,9 @@
       "id": "0DC96FC63099E229004F20B5",
       "product": "Products/companionTests.xctest",
       "product-type": "bundle.unit-test",
+      "dependencies": [
+        "companion",
+      ],
       "build-phases": [
         "compile-sources",
         "frameworks",

@@ -66,6 +66,63 @@ struct MeetingAssistantTests {
         #expect(!assistant.isThinking)
     }
 
+    @Test func silentChunksAreLoggedButNotSent() async throws {
+        let client = MockMultimodalClient { _ in #"{"transcript": [], "suggestion": "NO_RESPONSE"}"# }
+        let assistant = MeetingAssistant()
+        assistant.batchDelay = .milliseconds(50)
+        let url = MediaChunk.makeFileURL(source: .microphone, fileExtension: "wav")
+        try Data([1, 2, 3, 4]).write(to: url)
+        let silent = MediaChunk(source: .microphone, url: url, duration: 8, mimeType: "audio/wav", isSilent: true)
+        defer { assistant.chunkLog.clear() }
+
+        await run(assistant, mode: remoteMode(client), chunks: [silent])
+
+        #expect(client.calls.isEmpty)
+        #expect(assistant.chunkLog.status(of: silent) == .skipped("Silent"))
+    }
+
+    @Test func typedMessageGoesToRemoteWithoutRecording() async throws {
+        let client = MockMultimodalClient { _ in #"{"transcript": [], "suggestion": "Say 42."}"# }
+        let assistant = MeetingAssistant()
+        assistant.customInstructions = "I am interviewing for a staff role."
+
+        await assistant.send(text: "  What should I answer?  ", mode: remoteMode(client))
+
+        #expect(!assistant.isRunning)
+        #expect(assistant.transcript.map(\.text) == ["What should I answer?"])
+        #expect(assistant.transcript.first?.speakerLabel == "Me (typed)")
+        #expect(answers(assistant) == ["Say 42."])
+        #expect(!assistant.isThinking)
+
+        let call = try #require(client.calls.first)
+        #expect(call.systemPrompt.hasSuffix("I am interviewing for a staff role."))
+        guard case .text(let preamble) = call.parts.first else {
+            Issue.record("Expected a text preamble")
+            return
+        }
+        #expect(preamble.contains("Me (typed): What should I answer?"))
+        #expect(preamble.contains("No new media."))
+        #expect(call.parts.count == 2)
+    }
+
+    @Test func emptyTypedMessageIsIgnored() async {
+        let client = MockMultimodalClient()
+        let assistant = MeetingAssistant()
+
+        await assistant.send(text: "   ", mode: remoteMode(client))
+
+        #expect(assistant.transcript.isEmpty)
+        #expect(client.calls.isEmpty)
+    }
+
+    @Test func customInstructionsAreAppendedOnlyWhenSet() {
+        #expect(MeetingAssistant.withCustomInstructions("Base", "") == "Base")
+        #expect(MeetingAssistant.withCustomInstructions("Base", "  \n ") == "Base")
+        let combined = MeetingAssistant.withCustomInstructions("Base", " Be brief. ")
+        #expect(combined.hasPrefix("Base\n\n"))
+        #expect(combined.hasSuffix("Be brief."))
+    }
+
     @Test func remoteNoResponseIsHidden() async throws {
         let client = MockMultimodalClient { _ in #"{"transcript": [{"speaker": "Me", "text": "  "}], "suggestion": "NO_RESPONSE"}"# }
         let assistant = MeetingAssistant()

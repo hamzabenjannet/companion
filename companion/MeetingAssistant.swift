@@ -6,6 +6,12 @@ nonisolated struct TranscriptLine: Identifiable, Sendable {
     let date: Date
     let source: CaptureSource
     let text: String
+    /// Typed into the text box rather than heard.
+    var isTyped = false
+
+    var speakerLabel: String {
+        isTyped ? "\(source.speakerLabel) (typed)" : source.speakerLabel
+    }
 }
 
 nonisolated struct Suggestion: Identifiable, Sendable {
@@ -48,6 +54,8 @@ final class MeetingAssistant {
     private(set) var suggestions: [Suggestion] = []
     /// The most recent chunks, for the debug section.
     let chunkLog: ChunkLog
+    /// Live per-channel state, for the recording indicators.
+    let monitor = CaptureMonitor()
 
     /// Sentinel the model returns when there is nothing worth saying.
     private static let noResponseToken = MultimodalPrompt.noResponseToken
@@ -60,6 +68,8 @@ final class MeetingAssistant {
     /// Pause before a remote batch is sent, so chunks from the different channels
     /// that end at about the same time go out in the same request.
     @ObservationIgnored var batchDelay: Duration = .milliseconds(500)
+    /// Extra instructions from the user, appended to the built-in system prompt.
+    @ObservationIgnored var customInstructions = ""
 
     @ObservationIgnored private let transport: any HTTPTransport
     @ObservationIgnored private var mode: ProcessingMode = .local(
@@ -95,15 +105,27 @@ final class MeetingAssistant {
     ) async {
         guard !isRunning else { return }
         let onChunk = beginPipeline(mode: mode)
+        monitor.begin(chunkDuration: chunkDuration)
+        let monitor = monitor
+        // Capture threads report live state; hop to the main actor to update the indicators.
+        func onMeter(_ source: CaptureSource) -> @Sendable (CaptureMeter) -> Void {
+            { meter in Task { @MainActor in monitor.update(meter, for: source) } }
+        }
 
         if captureMicrophone {
             do {
                 guard await MicrophoneCapture.requestAccess() else { throw CaptureError.microphoneDenied }
                 let mic = MicrophoneCapture(
-                    chunker: AudioChunker(source: .microphone, chunkDuration: chunkDuration, onChunk: onChunk)
+                    chunker: AudioChunker(
+                        source: .microphone,
+                        chunkDuration: chunkDuration,
+                        onChunk: onChunk,
+                        onMeter: onMeter(.microphone)
+                    )
                 )
                 try mic.start()
                 microphone = mic
+                monitor.activate(.microphone)
                 post(.info, "Microphone capture started.")
             } catch {
                 post(.error, "Microphone: \(error.localizedDescription)")
@@ -113,11 +135,17 @@ final class MeetingAssistant {
         if captureSystemAudio {
             do {
                 let system = SystemAudioCapture(
-                    chunker: AudioChunker(source: .system, chunkDuration: chunkDuration, onChunk: onChunk),
+                    chunker: AudioChunker(
+                        source: .system,
+                        chunkDuration: chunkDuration,
+                        onChunk: onChunk,
+                        onMeter: onMeter(.system)
+                    ),
                     onError: captureErrorHandler(prefix: "System audio stopped")
                 )
                 try await system.start()
                 systemAudio = system
+                monitor.activate(.system)
                 post(.info, "System audio capture started.")
             } catch {
                 post(.error, "System audio: \(error.localizedDescription) — \(Self.screenPermissionHint)")
@@ -129,10 +157,12 @@ final class MeetingAssistant {
                 let capture = ScreenCapture(
                     chunkDuration: chunkDuration,
                     onChunk: onChunk,
-                    onError: captureErrorHandler(prefix: "Screen recording")
+                    onError: captureErrorHandler(prefix: "Screen recording"),
+                    onFrame: { Task { @MainActor in monitor.recordFrame(for: .screen) } }
                 )
                 try await capture.start()
                 screen = capture
+                monitor.activate(.screen)
                 if case .local = mode {
                     post(.info, "Screen recording started. Local mode can't read video, so screen chunks only appear in the debug list.")
                 } else {
@@ -180,6 +210,7 @@ final class MeetingAssistant {
         chunkContinuation?.finish()
         chunkContinuation = nil
         isRunning = false
+        monitor.reset()
         post(.info, "Stopped. Remaining chunks are still being processed.")
     }
 
@@ -231,10 +262,74 @@ final class MeetingAssistant {
         }
     }
 
+    // MARK: Typed messages
+
+    /// Sends a typed message to the selected provider, with or without recording.
+    /// The message joins the transcript as "Me (typed)" so later requests see it too.
+    func send(text: String, mode: ProcessingMode) async {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        transcript.append(TranscriptLine(date: .now, source: .microphone, text: text, isTyped: true))
+
+        switch mode {
+        case .local(let settings):
+            scheduleInterpretation(settings: settings)
+        case .remote(let client, let model, let language, let providerName, let minInterval):
+            let wait = Self.remainingInterval(since: lastRemoteRequest, minInterval: minInterval)
+            if wait > .zero {
+                try? await Task.sleep(for: wait)
+            }
+            lastRemoteRequest = .now
+
+            isThinking = true
+            defer { isThinking = false }
+            do {
+                let parts: [MediaPart] = [
+                    .text(MultimodalPrompt.preamble(
+                        context: Array(transcript.suffix(Self.contextLineCount)),
+                        previousSuggestions: recentAnswers(),
+                        hasMedia: false
+                    )),
+                    .text(MultimodalPrompt.typedMessageNote),
+                ]
+                let raw = try await client.generate(
+                    model: model,
+                    systemPrompt: Self.withCustomInstructions(
+                        MultimodalPrompt.systemPrompt(language: language),
+                        customInstructions
+                    ),
+                    parts: parts
+                )
+                // No media was sent, so only the suggestion matters.
+                postAnswerIfUseful(try MultimodalReply.parse(raw).suggestion)
+            } catch {
+                post(.error, "\(providerName): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Appends the user's instructions to a built-in prompt; empty instructions change nothing.
+    static func withCustomInstructions(_ basePrompt: String, _ instructions: String) -> String {
+        let trimmed = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return basePrompt }
+        return """
+            \(basePrompt)
+
+            Additional instructions from the user (follow them unless they conflict with the reply format above):
+            \(trimmed)
+            """
+    }
+
     // MARK: Pipeline
 
     private func receive(_ chunk: MediaChunk) {
         chunkLog.add(chunk)
+        monitor.record(chunk)
+        // Silent audio is kept in the debug list (to show there was no gap) but not processed.
+        guard !chunk.isSilent else {
+            chunkLog.update(chunk, status: .skipped("Silent"))
+            return
+        }
         pending.append(chunk)
         scheduleWorker()
     }
@@ -325,14 +420,14 @@ final class MeetingAssistant {
         interpretedLineCount = transcript.count
 
         let context = transcript.suffix(Self.contextLineCount)
-            .map { "\($0.source.speakerLabel): \($0.text)" }
+            .map { "\($0.speakerLabel): \($0.text)" }
             .joined(separator: "\n")
         let recentSuggestions = recentAnswers()
             .map { "- \($0)" }
             .joined(separator: "\n")
 
         let messages = [
-            ChatMessage(role: "system", content: Self.systemPrompt),
+            ChatMessage(role: "system", content: Self.withCustomInstructions(Self.systemPrompt, customInstructions)),
             ChatMessage(role: "user", content: """
                 Live meeting transcript (most recent last; the last \(newLines) line(s) are new):
                 \(context)
@@ -376,7 +471,10 @@ final class MeetingAssistant {
             )
             let raw = try await client.generate(
                 model: model,
-                systemPrompt: MultimodalPrompt.systemPrompt(language: language),
+                systemPrompt: Self.withCustomInstructions(
+                    MultimodalPrompt.systemPrompt(language: language),
+                    customInstructions
+                ),
                 parts: parts
             )
             let reply = try MultimodalReply.parse(raw)
@@ -435,7 +533,7 @@ final class MeetingAssistant {
     private static let systemPrompt = """
         You are a discreet real-time meeting companion for the user ("Me").
         The transcript comes from automatic speech recognition and may contain errors or cut-off sentences.
-        "Others" are the remote participants; "Me" is the user.
+        "Others" are the remote participants; "Me" is the user. "Me (typed)" lines were typed by the user directly to you; always answer those.
 
         Focus on the newest lines:
         - If someone asks a question (especially "Others" asking "Me"), give the user a concise, accurate answer they can say.
